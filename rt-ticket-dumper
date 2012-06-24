@@ -5,217 +5,216 @@ use lib "/usr/lib/rt";
 use RT;
 use RT::Tickets;
 use RT::User;
-use RT::Transactions;
-use RT::Attachments;
-use RT::Links;
 
 use XML::Simple;
 use MIME::Base64;
-use Data::Dumper;
-use Getopt::Std;
 
 my %queues;
 my %lut;
-$queues{'1'} = 348;
-$queues{'3'} = 351;
-$queues{'4'} = 349;
-$queues{'5'} = 353;
-$queues{'6'} = 352;
-$queues{'7'} = 350;
+my %users;
+$queues{1} = 348;
+$queues{3} = 351;
+$queues{4} = 349;
+$queues{5} = 353;
+$queues{6} = 352;
+$queues{7} = 350;
 
-sub convertUser($) {
-	my $userid = shift;
-	return $users{$userid} if ($users{$userid});
-	my $user = RT::User->new($RT::SystemUser);
-	$user->Load($userid);
-	my $email = $user->EmailAddress();
-	$users{$userid} = $email;
-	return $email;
+sub convertUser {
+    my $userid = shift;
+    return $users{$userid} if ( $users{$userid} );
+    my $user = RT::User->new($RT::SystemUser);
+    $user->Load($userid);
+    my $email = $user->EmailAddress();
+    $users{$userid} = $email;
+    return $email;
 }
 
-sub convertQueue($) {
-	my $queue = shift;
-	return $queues{$queue};
+sub convertQueue {
+    my $queue = shift;
+    return $queues{$queue} || $queue;
+}
+
+sub convertEmail {
+    my $emailid = shift;
+    return $users{$emailid} if ( $users{$emailid} );
+    my $user = RT::User->new($RT::SystemUser);
+    $user->LoadByEmail($emailid);
+    my $email = $user->EmailAddress();
+    $users{$emailid} = $email;
+    return $email || $emailid;
 }
 
 RT::LoadConfig();
 RT::Init();
 
-my %RV;
-
-my %users;
 my $objects = RT::Tickets->new($RT::SystemUser);
 $objects->{find_disabled_rows} = 1;
 $objects->UnLimit;
-my @classes = ('Tickets');
-print STDERR "Tickets\n";
-while (my $obj = $objects->Next) {
-	print STDERR ".";
+while ( my $obj = $objects->Next ) {
+    print 'Ticket ', $obj->id, ' ';
+    next unless $obj->EffectiveId == $obj->id;    # Skip merged tickets
 
-	my @attributes = ( "EffectiveId",
-					"Queue",
-					"id",
-					"Type",
-					"IssueStatement",
-					"Resolution",
-					"Subject",
-					"InitialPriority",
-					"FinalPriority",
-					"Priority",
-					"Owner",
-					"LastUpdatedBy",
-					"LastUpdated",
-					"TimeEstimated",
-					"TimeWorked",
-					"Status",
-					"TimeLeft",
-					"Told",
-					"Creator",
-					"Created",
-					"Starts",
-					"Started",
-					"Due",
-					"Resolved",
-					"Disabled" );
-	my $rv;
-	foreach my $attr (@attributes) {
-		$rv->{$attr} = $obj->$attr;
-	}
+    my @attributes = (
+        "Queue",           "id",
+        "Type",            "IssueStatement",
+        "Resolution",      "Subject",
+        "InitialPriority", "FinalPriority",
+        "Priority",        "Owner",
+        "LastUpdatedBy",   "LastUpdated",
+        "TimeEstimated",   "TimeWorked",
+        "Status",          "TimeLeft",
+        "Told",            "Creator",
+        "Created",         "Starts",
+        "Started",         "Due",
+        "Resolved",        "Disabled"
+    );
+    my $rv;
+    $rv->{$_} = $obj->$_ for @attributes;
 
-	$rv->{'Queue'} = convertQueue($rv->{'Queue'});
-	$rv->{'Owner'} = convertUser($rv->{'Owner'});
-	$rv->{"LastUpdatedBy"} = convertUser($rv->{'LastUpdatedBy'});
-	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+    $rv->{Queue}         = convertQueue( $rv->{Queue} );
+    $rv->{Owner}         = convertUser( $rv->{Owner} );
+    $rv->{LastUpdatedBy} = convertUser( $rv->{LastUpdatedBy} );
+    $rv->{Creator}       = convertUser( $rv->{Creator} );
 
-	my @requestors = $obj->Requestors->MemberEmailAddresses;
-	foreach my $rqemail (@requestors) { $rqemail = convertEmail($rqemail) }  ;
-	$rv->{'Requestor'} = join (', ', @requestors);
+    foreach my $type (qw( Requestors Cc AdminCc )) {
+        my @addresses = $obj->$type->MemberEmailAddresses;
+        next unless @addresses;
+        $rv->{$type} = join ', ', map { convertEmail($_) } @addresses;
+    }
 
-	my @ccs = $obj->Cc->MemberEmailAddresses;
-	foreach my $ccemail (@ccs) { $ccemail = convertEmail($ccemail) } ;
-	$rv->{'Cc'} = join (', ', @ccs);
+    $rv->{Transactions} = parse_transactions( $obj->Transactions );
+    $rv->{CustomFields} = get_custom_fields($obj);
+    $rv->{$_}           = parse_links( $obj->$_ )
+        for qw(MemberOf Members DependsOn DependedOnBy RefersTo ReferredToBy);
 
-	my @adminccs = $obj->AdminCc->MemberEmailAddresses;
-	foreach my $accemail (@adminccs) { $accemail = convertEmail($accemail) };
-	$rv->{'AdminCc'} = join (', ', @adminccs);
-
-	push @{$RV{'Tickets'}}, $rv;
+    export_ticket($rv);
+    print "\n";
 }
 
-$objects = RT::Transactions->new($RT::SystemUser);
-$objects->{find_disabled_rows} = 1;
-$objects->UnLimit;
-push @classes, 'Transactions' ;
-print STDERR "Transactions\n";
-while (my $obj = $objects->Next) {
-	print STDERR ".";
+sub parse_transactions {
+    my ($objects) = @_;
 
-	my @attributes = ( 
-		"id",
-		"ObjectId",
-		"TimeTaken",
-		"Type",
-		"Field",
-		"Data",
-		"Created",
-		"ObjectType",
-		"Creator",
-		"OldValue",
-		"NewValue",
-					);
-	my $rv;
-	foreach my $attr (@attributes) {
-		$rv->{$attr} = $obj->$attr;
-	}
+    my @transactions;
+    while ( my $obj = $objects->Next ) {
+        print 'T:', $obj->id, ' ';
 
-	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+        my @attributes = (
+            "id",      "ObjectId", "TimeTaken", "Type",
+            "Field",   "Data",     "Created",   "ObjectType",
+            "Creator", "OldValue", "NewValue",
+        );
+        my $rv;
+        $rv->{$_} = $obj->$_ for @attributes;
 
-	if ($rv->{'Type'} eq 'Queue') {
-		$rv->{'OldValue'} = convertQueue($rv->{'OldValue'});
-		$rv->{'NewValue'} = convertQueue($rv->{'NewValue'});
-	} elsif (
-			($rv->{'Type'} eq 'Owner') || 
-			($rv->{'Type'} eq 'Requestor') || 
-			($rv->{'Type'} eq 'AdminCc') ){
-		$rv->{'OldValue'} = convertUser($rv->{'OldValue'});
-		$rv->{'NewValue'} = convertUser($rv->{'NewValue'});
-	}
+        $rv->{Creator} = convertUser( $rv->{Creator} );
 
-	push @{$RV{'Transactions'}}, $rv;
+        if ( $rv->{Type} eq 'Queue' ) {
+            $rv->{OldValue} = convertQueue( $rv->{OldValue} );
+            $rv->{NewValue} = convertQueue( $rv->{NewValue} );
+        }
+        elsif (( $rv->{Type} eq 'Owner' )
+            || ( $rv->{Type} eq 'Requestor' )
+            || ( $rv->{Type} eq 'AdminCc' ) )
+        {
+            $rv->{OldValue} = convertUser( $rv->{OldValue} );
+            $rv->{NewValue} = convertUser( $rv->{NewValue} );
+        }
+
+        $rv->{Attachments}  = parse_attachments( $obj->Attachments );
+        $rv->{CustomFields} = get_custom_fields($obj);
+
+        push @transactions, $rv;
+    }
+    return unless @transactions;
+    return \@transactions;
 }
 
-$objects = RT::Attachments->new($RT::SystemUser);
-$objects->{find_disabled_rows} = 1;
-$objects->UnLimit;
-push @classes,'Attachments';
-print STDERR "Attachments\n";
-while (my $obj = $objects->Next) {
-	print STDERR ".";
+sub parse_attachments {
+    my ($objects) = @_;
 
-	my @attributes = ( 
-		"id",
-		"TransactionId",
-		"Parent",
-		"MessageId",
-		"Subject",
-		"Filename",
-		"ContentType",
-		"ContentEncoding",
-		"Creator",
-		"Content",
-		"Headers",
-		"Created",
-					);
-	my $rv;
-	foreach my $attr (@attributes) {
-		$rv->{$attr} = $obj->$attr;
-	}
+    my @attachments;
+    while ( my $obj = $objects->Next ) {
+        print 'A:', $obj->id, ' ';
 
-	Encode::_utf8_off($rv->{'Content'});
-	$rv->{'Content'} = encode_base64($rv->{'Content'});
+        my @attributes = (
+            "id",          "TransactionId",
+            "Parent",      "MessageId",
+            "Subject",     "Filename",
+            "ContentType", "ContentEncoding",
+            "Creator",     "Content",
+            "Headers",     "Created",
+        );
+        my $rv;
+        $rv->{$_} = $obj->$_ for @attributes;
 
-	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+        if ( $rv->{Content} ) {
+            Encode::_utf8_off( $rv->{Content} );
+            $rv->{Content} = encode_base64( $rv->{Content} );
+        }
 
-	push @{$RV{'Attachments'}}, $rv;
+        $rv->{Creator} = convertUser( $rv->{Creator} );
+
+        $rv->{CustomFields} = get_custom_fields($obj);
+
+        push @attachments, $rv;
+    }
+    return unless @attachments;
+    return \@attachments;
 }
 
+sub parse_links {
+    my ($objects) = @_;
 
-$objects = RT::Links->new($RT::SystemUser);
-$objects->{find_disabled_rows} = 1;
-$objects->UnLimit;
-push @classes, 'Links';
-print STDERR "Links\n";
-while (my $obj = $objects->Next) {
-	print STDERR ".";
+    my @links;
+    while ( my $obj = $objects->Next ) {
+        print 'L:', $obj->id, ' ';
 
-	my @attributes = ( 
-		"id",
-		"Base",
-		"Target",
-		"Type",
-		"LocalTarget",
-		"LocalBase",
-		"LastUpdatedBy",
-		"LastUpdated",
-		"Creator",
-		"Created",
-					);
-	my $rv;
-	foreach my $attr (@attributes) {
-		$rv->{$attr} = $obj->$attr;
-	}
+        my @attributes = (
+            "id",          "Base",      "Target",        "Type",
+            "LocalTarget", "LocalBase", "LastUpdatedBy", "LastUpdated",
+            "Creator",     "Created",
+        );
+        my $rv;
+        $rv->{$_} = $obj->$_ for @attributes;
 
-	$rv->{"Creator"} = convertUser($rv->{'Creator'});
-	$rv->{"LastUpdatedBy"} = convertUser($rv->{'LastUpdatedBy'});
+        $rv->{Creator}       = convertUser( $rv->{Creator} );
+        $rv->{LastUpdatedBy} = convertUser( $rv->{LastUpdatedBy} );
 
-	push @{$RV{'Links'}}, $rv;
+        push @links, $rv;
+    }
+    return unless @links;
+    return \@links;
 }
 
+sub get_custom_fields {
+    my ($obj) = @_;
 
-print XMLout(
-    { map { ($_ => ($RV{$_} || [])) } @classes },
-    RootName => 'InitialData',
-    NoAttr => 1,
-    SuppressEmpty => '',
-    XMLDecl => '<?xml version="1.0" encoding="UTF-8"?>',
-);
+    my $cfs = $obj->CustomFields;
+
+    my @custom_fields;
+    while ( my $cf = $cfs->Next ) {
+        my $value = $obj->CustomFieldValuesAsString( $cf->Name );
+        next unless $value;
+        push @custom_fields, {
+            Name  => $cf->Name,
+            Value => $value,
+        };
+    }
+    return unless @custom_fields;
+    return \@custom_fields;
+}
+
+sub export_ticket {
+    my ($data) = @_;
+
+    my $filename = sprintf "Ticket_%05d.xml", $data->{id};
+    open my $fh, '>', $filename or die $!;
+    print $fh XMLout(
+        $data,
+        RootName      => 'Ticket',
+        NoAttr        => 1,
+        SuppressEmpty => '',
+        XMLDecl       => '<?xml version="1.0" encoding="UTF-8"?>',
+    );
+    close $fh;
+}
