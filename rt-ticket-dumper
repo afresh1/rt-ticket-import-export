@@ -1,0 +1,221 @@
+#!/usr/bin/perl -w
+
+use lib "/usr/lib/rt";
+
+use RT;
+use RT::Tickets;
+use RT::User;
+use RT::Transactions;
+use RT::Attachments;
+use RT::Links;
+
+use XML::Simple;
+use MIME::Base64;
+use Data::Dumper;
+use Getopt::Std;
+
+my %queues;
+my %lut;
+$queues{'1'} = 348;
+$queues{'3'} = 351;
+$queues{'4'} = 349;
+$queues{'5'} = 353;
+$queues{'6'} = 352;
+$queues{'7'} = 350;
+
+sub convertUser($) {
+	my $userid = shift;
+	return $users{$userid} if ($users{$userid});
+	my $user = RT::User->new($RT::SystemUser);
+	$user->Load($userid);
+	my $email = $user->EmailAddress();
+	$users{$userid} = $email;
+	return $email;
+}
+
+sub convertQueue($) {
+	my $queue = shift;
+	return $queues{$queue};
+}
+
+RT::LoadConfig();
+RT::Init();
+
+my %RV;
+
+my %users;
+my $objects = RT::Tickets->new($RT::SystemUser);
+$objects->{find_disabled_rows} = 1;
+$objects->UnLimit;
+my @classes = ('Tickets');
+print STDERR "Tickets\n";
+while (my $obj = $objects->Next) {
+	print STDERR ".";
+
+	my @attributes = ( "EffectiveId",
+					"Queue",
+					"id",
+					"Type",
+					"IssueStatement",
+					"Resolution",
+					"Subject",
+					"InitialPriority",
+					"FinalPriority",
+					"Priority",
+					"Owner",
+					"LastUpdatedBy",
+					"LastUpdated",
+					"TimeEstimated",
+					"TimeWorked",
+					"Status",
+					"TimeLeft",
+					"Told",
+					"Creator",
+					"Created",
+					"Starts",
+					"Started",
+					"Due",
+					"Resolved",
+					"Disabled" );
+	my $rv;
+	foreach my $attr (@attributes) {
+		$rv->{$attr} = $obj->$attr;
+	}
+
+	$rv->{'Queue'} = convertQueue($rv->{'Queue'});
+	$rv->{'Owner'} = convertUser($rv->{'Owner'});
+	$rv->{"LastUpdatedBy"} = convertUser($rv->{'LastUpdatedBy'});
+	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+
+	my @requestors = $obj->Requestors->MemberEmailAddresses;
+	foreach my $rqemail (@requestors) { $rqemail = convertEmail($rqemail) }  ;
+	$rv->{'Requestor'} = join (', ', @requestors);
+
+	my @ccs = $obj->Cc->MemberEmailAddresses;
+	foreach my $ccemail (@ccs) { $ccemail = convertEmail($ccemail) } ;
+	$rv->{'Cc'} = join (', ', @ccs);
+
+	my @adminccs = $obj->AdminCc->MemberEmailAddresses;
+	foreach my $accemail (@adminccs) { $accemail = convertEmail($accemail) };
+	$rv->{'AdminCc'} = join (', ', @adminccs);
+
+	push @{$RV{'Tickets'}}, $rv;
+}
+
+$objects = RT::Transactions->new($RT::SystemUser);
+$objects->{find_disabled_rows} = 1;
+$objects->UnLimit;
+push @classes, 'Transactions' ;
+print STDERR "Transactions\n";
+while (my $obj = $objects->Next) {
+	print STDERR ".";
+
+	my @attributes = ( 
+		"id",
+		"ObjectId",
+		"TimeTaken",
+		"Type",
+		"Field",
+		"Data",
+		"Created",
+		"ObjectType",
+		"Creator",
+		"OldValue",
+		"NewValue",
+					);
+	my $rv;
+	foreach my $attr (@attributes) {
+		$rv->{$attr} = $obj->$attr;
+	}
+
+	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+
+	if ($rv->{'Type'} eq 'Queue') {
+		$rv->{'OldValue'} = convertQueue($rv->{'OldValue'});
+		$rv->{'NewValue'} = convertQueue($rv->{'NewValue'});
+	} elsif (
+			($rv->{'Type'} eq 'Owner') || 
+			($rv->{'Type'} eq 'Requestor') || 
+			($rv->{'Type'} eq 'AdminCc') ){
+		$rv->{'OldValue'} = convertUser($rv->{'OldValue'});
+		$rv->{'NewValue'} = convertUser($rv->{'NewValue'});
+	}
+
+	push @{$RV{'Transactions'}}, $rv;
+}
+
+$objects = RT::Attachments->new($RT::SystemUser);
+$objects->{find_disabled_rows} = 1;
+$objects->UnLimit;
+push @classes,'Attachments';
+print STDERR "Attachments\n";
+while (my $obj = $objects->Next) {
+	print STDERR ".";
+
+	my @attributes = ( 
+		"id",
+		"TransactionId",
+		"Parent",
+		"MessageId",
+		"Subject",
+		"Filename",
+		"ContentType",
+		"ContentEncoding",
+		"Creator",
+		"Content",
+		"Headers",
+		"Created",
+					);
+	my $rv;
+	foreach my $attr (@attributes) {
+		$rv->{$attr} = $obj->$attr;
+	}
+
+	Encode::_utf8_off($rv->{'Content'});
+	$rv->{'Content'} = encode_base64($rv->{'Content'});
+
+	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+
+	push @{$RV{'Attachments'}}, $rv;
+}
+
+
+$objects = RT::Links->new($RT::SystemUser);
+$objects->{find_disabled_rows} = 1;
+$objects->UnLimit;
+push @classes, 'Links';
+print STDERR "Links\n";
+while (my $obj = $objects->Next) {
+	print STDERR ".";
+
+	my @attributes = ( 
+		"id",
+		"Base",
+		"Target",
+		"Type",
+		"LocalTarget",
+		"LocalBase",
+		"LastUpdatedBy",
+		"LastUpdated",
+		"Creator",
+		"Created",
+					);
+	my $rv;
+	foreach my $attr (@attributes) {
+		$rv->{$attr} = $obj->$attr;
+	}
+
+	$rv->{"Creator"} = convertUser($rv->{'Creator'});
+	$rv->{"LastUpdatedBy"} = convertUser($rv->{'LastUpdatedBy'});
+
+	push @{$RV{'Links'}}, $rv;
+}
+
+
+print XMLout(
+    { map { ($_ => ($RV{$_} || [])) } @classes },
+    RootName => 'InitialData',
+    NoAttr => 1,
+    SuppressEmpty => '',
+    XMLDecl => '<?xml version="1.0" encoding="UTF-8"?>',
+);
