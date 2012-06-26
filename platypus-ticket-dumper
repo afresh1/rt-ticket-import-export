@@ -1,11 +1,9 @@
-
 #!/usr/bin/perl
-# $RedRiver: export_tickets.pl,v 1.1 2012/04/05 03:09:02 andrew Exp $
 ########################################################################
 # export_tickets.pl *** Exports tickets from all tables
 #
 # 2006.10.30 *#*# Started as delete_tickets.pl
-# 2012.03.24 *#*# andrew fresh <andrew@mad-techies.org>
+# 2012.03.24 *#*# andrew fresh <andrew@afresh1.com>
 ########################################################################
 use strict;
 use warnings;
