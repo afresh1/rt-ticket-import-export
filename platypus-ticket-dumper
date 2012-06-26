@@ -1,0 +1,124 @@
+
+#!/usr/bin/perl
+# $RedRiver: export_tickets.pl,v 1.1 2012/04/05 03:09:02 andrew Exp $
+########################################################################
+# export_tickets.pl *** Exports tickets from all tables
+#
+# 2006.10.30 *#*# Started as delete_tickets.pl
+# 2012.03.24 *#*# andrew fresh <andrew@mad-techies.org>
+########################################################################
+use strict;
+use warnings;
+
+use YAML qw/ DumpFile /;
+use File::Path qw/ make_path /;
+use DBI;
+my $Data_Source = 'DBI:Sybase:Platypus';
+my $DBUser      = 'platuser';
+my $DBPass      = '';
+my $dbh
+    = DBI->connect( $Data_Source, $DBUser, $DBPass,
+    { RaiseError => 1, AutoCommit => 1 } )
+    or die "Couldn't Connect to $Data_Source: $DBI::errstr";
+
+my $base_dir = 'export';
+
+my $Select_q = q{
+    SELECT name, username, phone, email, ticket_tbl.* FROM ticket_tbl
+};
+# A join that will allow you to grab tickets for specific customers
+#    JOIN customer ON tkt_customer_id = customer.id
+#    WHERE name LIKE '%CustomerI'mInterestedIn%'
+#    ORDER BY customer.id, tkt_id
+
+# A query that you can use to find customer names
+#$Select_q = q{
+#    SELECT name, COUNT(*) FROM ticket_tbl
+#    JOIN customer ON tkt_customer_id = customer.id
+#    GROUP BY name
+#};
+#my %Tickets = map { @{ $_ } } map{ @{ $_ } } $dbh->selectall_arrayref($Select_q);#, {Slice=>{}});
+#print YAML::Dump \%Tickets; exit;
+
+my @Tables = (
+    {   name => 'note_tbl',
+        type => 'note_idtype',
+        num  => 'note_idnum',
+    },
+    {   name => 'call_tbl',
+        type => 'call_idtype',
+        num  => 'call_idnum',
+    },
+    {   name => 'attachments',
+        type => 'at_idtype',
+        num  => 'at_idnum',
+    },
+    {   name => 'history_tbl',
+        type => 'hist_idtype',
+        num  => 'hist_idnum',
+    },
+    {   name  => 'email_attachments',
+        query => q/SELECT * FROM attachments WHERE 
+		           at_idtype = 'Email' AND at_idnum IN 
+				   (SELECT em_id FROM email_msg WHERE 
+				   em_idtype = 'Ticket' AND em_idnum = ?)/,
+    },
+    {   name => 'email_msg',
+        type => 'em_idtype',
+        num  => 'em_idnum',
+    },
+#    {   name => 'customer',
+#        query => q/SELECT 
+#                name, username, phone, email
+#            FROM customer 
+#            JOIN ticket_tbl ON customer.id = tkt_customer_id
+#           WHERE tkt_id = ?/,
+#    },
+);
+
+my $Tickets = $dbh->selectall_arrayref($Select_q, {Slice=>{}});
+
+my $i;
+foreach my $ticket (@{ $Tickets }) {
+    next unless $ticket;
+    #use Data::Dumper; print Dumper $ticket; exit;
+    $i++;
+    print "exporting ticket $ticket->{tkt_id} ($i of " . @{ $Tickets } . ")\n";
+    my $dir
+        = $base_dir . '/'
+        . $ticket->{tkt_customer_id} . '/'
+        . $ticket->{tkt_id};
+    make_path( $dir );
+    DumpFile( $dir . '/ticket.yml', $ticket );
+    foreach my $t (@Tables) {
+        my $sth = $t->{sth};
+        my $q   = $t->{query};
+        unless ($q) {
+            $q = 'SELECT * FROM';
+            $q .= ' ' . $t->{'name'};
+            $q .= ' WHERE';
+            if ( $t->{'type'} ) {
+                $q .= ' ' . $t->{'type'};
+                $q .= " = 'Ticket' AND";
+            }
+            $q .= ' ' . $t->{'num'};
+            $q .= ' = ?';
+            $q .= ' ORDER BY ' . $t->{'num'};
+        }
+        unless ($sth) {
+            $sth = $dbh->prepare($q) or die "Couldn't prepare '$q': $dbh->errstr";
+            $t->{sth} = $sth;
+            $t->{query} = $q;
+        }
+        $sth->execute($ticket->{tkt_id})
+            or die
+            "Couldn't execute '$q' with ticket '$ticket->{tkt_id}': $sth->errstr";
+
+        #print "$q ($ticket->{tkt_id})\n";
+        DumpFile( 
+            $dir . '/' . $t->{name} . '.yml',
+            $sth->fetchall_arrayref({})
+        );
+    }
+}
+$dbh->disconnect;
