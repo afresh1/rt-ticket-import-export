@@ -29,15 +29,15 @@ use strict;
 use Getopt::Std;
 
 my %opts;
-getopts( 'c:r:f:h', \%opts );
+getopts( 'c:r:d:h', \%opts );
 
-my $cf     = $opts{'c'};
-my $rtname = $opts{'r'};
-my $file   = $opts{'f'};
+my $cf        = $opts{'c'};
+my $rtname    = $opts{'r'};
+my $directory = $opts{'d'};
 
-unless ( !$opts{'h'} && $cf && $rtname && $file ) {
+unless ( !$opts{'h'} && $cf && $rtname && $directory ) {
     print
-        "rt-ticket-importer -f <filename> -r <source RT name> -c <CustomfieldId>\n";
+        "rt-ticket-importer -d <directory> -r <source RT name> -c <CustomfieldId>\n";
     exit;
 }
 
@@ -56,14 +56,6 @@ $SIG{__DIE__} = "";
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
 
-my $data = XMLin($file);
-
-print STDERR "File Loaded\n";
-
-my $attachments  = $data->{'Attachments'};
-my $links        = $data->{'Links'};
-my $transactions = $data->{'Transactions'};
-my $tickets      = $data->{'Tickets'};
 my %USERS;
 my %TICKETS;
 my %TRANSACTIONS;
@@ -309,19 +301,25 @@ sub ConvertLink {
 
 }
 
-foreach ( sort { $a <=> $b } keys %$tickets ) {
-    ConvertTicket($_);
+opendir my $dh, $directory or die $!;
+my @files = map {"$directory/$_"}
+    sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
+closedir $dh;
+
+foreach my $file (@files) {
+    warn "Converting $file\n";
+    my $ticket = XMLin(
+        $file,
+        SuppressEmpty => 1,
+        GroupTags     => {
+            Transactions => 'Transaction',
+            Attachments  => 'Attachment',
+            CustomFields => 'CustomField',
+        },
+        ForceArray => [qw( Transaction Attachment CustomField )],
+        KeyAttr    => { Transaction => '+id', Attachment => '+id' },
+    );
+    ConvertTicket($ticket);
 }
 
-foreach ( sort { $a <=> $b } keys %$transactions ) {
-    next unless ( $transactions->{$_}->{'ObjectType'} eq 'RT::Ticket' );
-    ConvertTransaction($_);
-}
-
-foreach ( sort { $a <=> $b } keys %$attachments ) {
-    ConvertAttachment($_);
-}
-
-foreach ( sort { $a <=> $b } keys %$links ) {
-    ConvertLink($_);
-}
+process_queued_links();
