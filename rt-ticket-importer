@@ -3,8 +3,6 @@
 # This script outputs all reminders that are due within the next e.g. two
 # days and mails the result to the corresponding owners.
 #
-die "This no longer works, please fix it and send me the changes!";
-
 package RT::Importer;
 
 #use lib ("/etc/request-tracker3.6", "/usr/lib/rt/",
