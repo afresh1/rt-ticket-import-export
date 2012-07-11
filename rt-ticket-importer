@@ -79,6 +79,7 @@ $SIG{__DIE__} = "";
 eval { RT::DropSetGIDPermissions() };
 
 my %USERS;
+my %QUEUES;
 my %TICKETS;
 my %TRANSACTIONS;
 my %LINKS;
@@ -92,6 +93,14 @@ sub ConvertUser {
     $userObj->LoadOrCreateByEmail($user);
     $USERS{$user} = $userObj->Id;
     return $USERS{$user};
+}
+
+sub ConvertQueue {
+    my ($queue) = @_;
+    return $QUEUES{$queue} if $QUEUES{$queue};
+    my $queueObj = new RT::Queue($RT::SystemUser);
+    $queueObj->Load($queue);
+    return $QUEUES{$queue} = $queueObj->Id || ConvertQueue('General');
 }
 
 sub ConvertTicket {
