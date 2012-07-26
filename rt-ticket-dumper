@@ -12,12 +12,6 @@ use MIME::Base64;
 my %queues;
 my %lut;
 my %users;
-$queues{1} = 348;
-$queues{3} = 351;
-$queues{4} = 349;
-$queues{5} = 353;
-$queues{6} = 352;
-$queues{7} = 350;
 
 sub convertUser {
     my $userid = shift;
@@ -30,8 +24,11 @@ sub convertUser {
 }
 
 sub convertQueue {
-    my $queue = shift;
-    return $queues{$queue} || $queue;
+    my ($queue) = @_;
+    return $queues{$queue} if $queues{$queue};
+    my $queueObj = new RT::Queue($RT::SystemUser);
+    $queueObj->Load($queue);
+    return $queues{$queue} = $queueObj->Name || convertQueue('General');
 }
 
 sub convertEmail {
