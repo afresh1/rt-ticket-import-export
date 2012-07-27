@@ -13,6 +13,29 @@ my %queues;
 my %lut;
 my %users;
 
+my %user_types = map { $_ => 1 } qw(
+    Owner
+    Creator
+    LastUpdatedBy
+    Requestor
+    Cc
+    AdminCc
+    AddWatcher
+    DelWatcher
+    Take
+);
+
+my %link_types = map { $_ => 1 } qw(
+    DependsOn
+    DependedOnBy
+    RefersTo
+    ReferredToBy
+    Members
+    MemberOf
+);
+#    HasMember
+#    MergedInto
+
 sub convertUser {
     my $userid = shift;
     return $users{$userid} if ( $users{$userid} );
@@ -77,8 +100,7 @@ while ( my $obj = $objects->Next ) {
 
     $rv->{Transactions} = parse_transactions( $obj->Transactions );
     $rv->{CustomFields} = get_custom_fields($obj);
-    $rv->{$_}           = parse_links( $obj->$_ )
-        for qw(MemberOf Members DependsOn DependedOnBy RefersTo ReferredToBy);
+    $rv->{$_}           = parse_links( $obj->$_ ) for keys %link_types;
 
     export_ticket($rv);
     print "\n";
@@ -101,14 +123,12 @@ sub parse_transactions {
 
         $rv->{Creator} = convertUser( $rv->{Creator} );
 
-        if ( $rv->{Type} eq 'Queue' ) {
+        if ( $rv->{Type} eq 'Set' and $rv->{Field} eq 'Queue' ) {
             $rv->{OldValue} = convertQueue( $rv->{OldValue} );
             $rv->{NewValue} = convertQueue( $rv->{NewValue} );
         }
-        elsif (( $rv->{Type} eq 'Owner' )
-            || ( $rv->{Type} eq 'Requestor' )
-            || ( $rv->{Type} eq 'AdminCc' ) )
-        {
+        elsif ( ( $rv->{Type} eq 'Set' and $user_types{ $rv->{Field} } ) 
+              or $user_types{ $rv->{Type} } ) {
             $rv->{OldValue} = convertUser( $rv->{OldValue} );
             $rv->{NewValue} = convertUser( $rv->{NewValue} );
         }
