@@ -18,9 +18,7 @@ sub convertUser {
     return $users{$userid} if ( $users{$userid} );
     my $user = RT::User->new($RT::SystemUser);
     $user->Load($userid);
-    my $email = $user->EmailAddress();
-    $users{$userid} = $email;
-    return $email;
+    return $users{$userid} = $user->EmailAddress() || $user->id;
 }
 
 sub convertQueue {
@@ -36,9 +34,7 @@ sub convertEmail {
     return $users{$emailid} if ( $users{$emailid} );
     my $user = RT::User->new($RT::SystemUser);
     $user->LoadByEmail($emailid);
-    my $email = $user->EmailAddress();
-    $users{$emailid} = $email;
-    return $email || $emailid;
+    return $users{$emailid} =  $user->EmailAddress() || $user->id || $emailid;
 }
 
 RT::LoadConfig();
