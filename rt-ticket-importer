@@ -311,50 +311,54 @@ sub import_transaction {
     return $newid;
 }
 
-sub ConvertAttachment {
-    my $id = shift;
+sub import_attachment {
+    my ($attachment) = @_;
 
-    return $ATTACHMENTS{$id} if ( $ATTACHMENTS{$id} );
-    my $attachment = $attachments->{$id};
-
+    my %a;
     foreach my $key ( keys %$attachment ) {
-        $attachment->{$key} = undef if ( ref( $attachment->{$key} ) );
+        my $value = $attachment->{$key};
+        next unless $value;
+
+        if ( ref $value ) {
+            next;
+        }
+        elsif ( $user_types{$key} ) {
+            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
+                $value ];
+            next unless @{$value};
+            $value = $value->[0] if @{$value} == 1;
+        }
+
+        $a{$key} = $value;
     }
 
-    if ( $attachment->{'Parent'} ) {
-        my $parent = $attachment->{'Parent'};
-        $attachment->{'Parent'} = ConvertAttachment($parent);
+    delete $a{Owner};
+
+    if ( $a{Parent} ) {
+
+        # I guess we just have to hope this exists
+        my $parent = $a{Parent};
+        $a{Parent} = $E{Attachments}{$parent};
     }
+
+    if ( $a{Content} ) {
+        Encode::_utf8_off( $a{Content} );
+        $a{Content} = decode_base64( $a{Content} );
+    }
+    else { $a{Content} = '' }
 
     my $attachObj = new RT::Attachment($RT::SystemUser);
+    my ( $newid, $msg ) = $attachObj->Import(%a);
+    print $msg and return unless $newid;
 
-    $attachment->{'Creator'} = ConvertUser( $attachment->{'Creator'} );
+    $attachObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $attachObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $attachObj->SetCreated( $a{Created} );
+    $attachObj->SetCreator( $a{Creator} );
 
-    $attachment->{'TransactionId'}
-        = ConvertTransaction( $attachment->{'TransactionId'} );
-    return undef unless ( defined( $attachment->{'TransactionId'} ) );
-
-    Encode::_utf8_off( $attachment->{'Content'} );
-    $attachment->{'Content'} = decode_base64( $attachment->{'Content'} );
-
-    my ( $newid, $msg ) = $attachObj->Import(%$attachment);
-
-    unless ($newid) {
-        print STDERR "Failed to create Attachment $id ($msg)!!!\n";
-        return undef;
-    }
-
-    print "Created Attachment # $id : as # $newid\n";
-    $| = 1;
-    $attachObj->{'_AccessibleCache'}{Created}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $attachObj->{'_AccessibleCache'}{Creator}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $attachObj->SetCreated( $attachment->{'Created'} );
-    $attachObj->SetCreator( $attachment->{'Creator'} );
-    $ATTACHMENTS{$id} = $newid;
     return $newid;
-
 }
 
 sub ConvertLink {
