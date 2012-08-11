@@ -361,47 +361,37 @@ sub import_attachment {
     return $newid;
 }
 
-sub ConvertLink {
-    my $id = shift;
+sub import_link {
+    my ($link) = @_;
 
-    return $LINKS{$id} if ( $LINKS{$id} );
-
-    my $link    = $links->{$id};
-    my $linkObj = new RT::Link($RT::SystemUser);
-
-    my $base = $link->{'Base'};
+    my $base = $link->{Base};
     $base =~ /([0-9]*)$/;
     $base = $1;
-    my $target = $link->{'Target'};
+    my $target = $link->{Target};
     $target =~ /([0-9]*)$/;
     $target = $1;
 
-    my $newid = $linkObj->Create(
-        Base   => ConvertTicket($base),
-        Target => ConvertTicket($target),
-        Type   => $link->{'Type'}
+    my $linkObj = new RT::Link($RT::SystemUser);
+    my $newid   = $linkObj->Create(
+        Base   => $E{Tickets}{$base},
+        Target => $E{Tickets}{$target},
+        Type   => $link->{Type}
     );
 
-    if ( $newid == 0 ) {
-        print STDERR "Failed to create Link $id!!!\n";
-        return undef;
-    }
+    return unless $newid;
 
-    print "Created Link # $id : as # $newid\n";
-    $| = 1;
-    $LINKS{$id} = $newid;
-    $linkObj->{'_AccessibleCache'}{Created}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $linkObj->{'_AccessibleCache'}{Creator}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $linkObj->{'_AccessibleCache'}{LastUpdated}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $linkObj->{'_AccessibleCache'}{LastUpdatedBy}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $linkObj->SetCreated( $link->{'Created'} );
-    $linkObj->SetCreator( ConvertUser( $link->{'Creator'} ) );
-    $linkObj->SetLastUpdated( $link->{'LastUpdated'} );
-    $linkObj->SetLastUpdatedBy( $link->{'LastUpdatedBy'} );
+    $linkObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{LastUpdated}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{LastUpdatedBy}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->SetCreated( $link->{Created} );
+    $linkObj->SetCreator( ConvertUser( $link->{Creator} ) );
+    $linkObj->SetLastUpdated( $link->{LastUpdated} );
+    $linkObj->SetLastUpdatedBy( $link->{LastUpdatedBy} );
 
     return $newid;
 
