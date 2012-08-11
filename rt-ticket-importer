@@ -14,28 +14,26 @@ use lib (
 );
 
 use RT::Interface::CLI qw(CleanEnv GetCurrentUser);
-use RT::Ticket;
-use RT::User;
 use RT::Attachment;
+use RT::Ticket;
 use RT::Transaction;
+use RT::User;
+
+use Getopt::Std;
 use MIME::Base64;
-
-use Data::Dumper;
-
 use XML::Simple;
 
 use strict;
-
-use Getopt::Std;
+use warnings;
 
 my %opts;
 getopts( 'c:r:d:h', \%opts );
 
-my $cf        = $opts{'c'};
-my $rtname    = $opts{'r'};
-my $directory = $opts{'d'};
+my $cf        = $opts{c};
+my $rtname    = $opts{r};
+my $directory = $opts{d};
 
-unless ( !$opts{'h'} && $cf && $rtname && $directory ) {
+unless ( !$opts{h} && $cf && $rtname && $directory ) {
     print
         "rt-ticket-importer -d <directory> -r <source RT name> -c <CustomfieldId>\n";
     exit;
