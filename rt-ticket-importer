@@ -78,29 +78,29 @@ $SIG{__DIE__} = "";
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
 
-my %USERS;
-my %QUEUES;
-my %TICKETS;
-my %TRANSACTIONS;
-my %LINKS;
-my %ATTACHMENTS;
+# Keep track of what has been converted.
+my %E;
+
+$E{Users} = {
+    1 => $RT::SystemUser,
+    6 => $RT::Nobody,
+};
 
 sub ConvertUser {
-    my $user = shift;
-    return $RT::Nobody->Id unless ($user);
-    return $USERS{$user} if ( $USERS{$user} );
+    my ($user) = @_;
+    return $RT::Nobody unless $user;
+    return $E{Users}{$user} if $E{Users}{$user};
     my $userObj = new RT::User($RT::SystemUser);
     $userObj->LoadOrCreateByEmail($user);
-    $USERS{$user} = $userObj->Id;
-    return $USERS{$user};
+    return $E{Users}{$user} = $userObj || $RT::Nobody;
 }
 
 sub ConvertQueue {
     my ($queue) = @_;
-    return $QUEUES{$queue} if $QUEUES{$queue};
+    return $E{Queues}{$queue} if $E{Queues}{$queue};
     my $queueObj = new RT::Queue($RT::SystemUser);
     $queueObj->Load($queue);
-    return $QUEUES{$queue} = $queueObj->Id || ConvertQueue('General');
+    return $E{Queues}{$queue} = $queueObj || ConvertQueue('General');
 }
 
 sub _ConvertItem {
