@@ -166,12 +166,12 @@ sub ConvertTransaction { _ConvertItem( 'Transactions', @_ ) }
 sub ConvertAttachment  { _ConvertItem( 'Attachments',  @_ ) }
 sub ConvertLink        { _ConvertItem( 'Links',        @_ ) }
 
-sub import_ticket {
-    my ($ticket) = @_;
+sub _pick_apart {
+    my ($item) = @_;
 
-    my %t;
-    foreach my $key ( keys %{$ticket} ) {
-        my $value = $ticket->{$key};
+    my %i;
+    foreach my $key ( keys %{$item} ) {
+        my $value = $item->{$key};
         next unless $value;
 
         if ( $link_types{$key} ) {
@@ -187,15 +187,28 @@ sub import_ticket {
             $value = ConvertQueue($value);
         }
         elsif ( $user_types{$key} ) {
-            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
+             $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
                 $value ];
             next unless @{$value};
-            $value = $value->[0] if @{$value} == 1;
+            if (   $key eq 'Owner'
+                or $key eq 'Creator'
+                or $key eq 'LastUpdatedBy'
+                or $key eq 'Take' )
+            {
+                $value = $value->[0];
+            }
         }
 
-        $t{$key} = $value;
+        $i{$key} = $value;
     }
 
+    return %i;
+}
+
+sub import_ticket {
+    my ($ticket) = @_;
+
+    my %t = _pick_apart($ticket);
     my $eid = $t{EffectiveId};
     $t{EffectiveId} = 0;
 
@@ -238,23 +251,7 @@ sub import_ticket {
 sub import_transaction {
     my ( $transaction, $ticket_id ) = @_;
 
-    my %t;
-    foreach my $key ( keys %$transaction ) {
-        my $value = $transaction->{$key};
-        next unless $value;
-
-        if ( ref $value ) {
-            next;
-        }
-        elsif ( $user_types{$key} ) {
-            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
-                $value ];
-            next unless @{$value};
-            $value = $value->[0] if @{$value} == 1;
-        }
-
-        $t{$key} = $value;
-    }
+    my %t = _pick_apart( $transaction );
 
     if ( $link_types{ $t{Type} } ) {
         if ($ticket_id) {    # If this is the first time through don't add
@@ -313,24 +310,7 @@ sub import_transaction {
 sub import_attachment {
     my ($attachment) = @_;
 
-    my %a;
-    foreach my $key ( keys %$attachment ) {
-        my $value = $attachment->{$key};
-        next unless $value;
-
-        if ( ref $value ) {
-            next;
-        }
-        elsif ( $user_types{$key} ) {
-            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
-                $value ];
-            next unless @{$value};
-            $value = $value->[0] if @{$value} == 1;
-        }
-
-        $a{$key} = $value;
-    }
-
+    my %a = _pick_apart( $attachment );
     delete $a{Owner};
 
     if ( $a{Parent} ) {
