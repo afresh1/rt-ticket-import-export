@@ -103,53 +103,70 @@ sub ConvertQueue {
     return $QUEUES{$queue} = $queueObj->Id || ConvertQueue('General');
 }
 
-sub ConvertTicket {
+sub _ConvertItem {
+    my $type = shift;
+    my $item = shift;
 
-    my $id = shift;
-    return $TICKETS{$id} if ( $TICKETS{$id} );
-    return undef unless ($id);
+    my %T = (
+        Tickets => {
+            import   => \&import_ticket,
+            children => 'Transactions',
+        },
+        Transactions => {
+            import    => \&import_transaction,
+            children  => 'Attachments',
+            parent_id => 'ObjectId',
+        },
+        Attachments => {
+            import    => \&import_attachment,
+            parent_id => 'TransactionId',
+        },
+        Links => { import => \&import_link, }
+    );
 
-    my $ticket = $tickets->{$id};
-    return undef unless ( defined($ticket) );
+    die "Unknown type [$type]!" unless $T{$type};
 
-    foreach my $key ( keys %$ticket ) {
-        $ticket->{$key} = undef if ( ref( $ticket->{$key} ) );
+    my $old_id = $item->{id};
+    my $new_id = $E{$type}{$old_id} || $T{$type}{import}( $item, @_ );
+    if ($new_id) {
+        $E{$type}{$old_id} = $new_id;
+        print "Created $type #$old_id\n";
+    }
+    else {
+
+        # Get rid of the old id to try to create with a new id
+        delete $item->{id};
+        $new_id = $T{$type}{import}( $item, @_ );
+        $E{$type}{$old_id} = $new_id;
+        print "Created $type #$old_id as #$new_id\n";
+    }
+    unless ( $E{$type}{$old_id} ) {
+        print STDERR "Failed to create $type $old_id!!!\n";
+        return;
     }
 
-    my $ticketObj = new RT::Ticket($RT::SystemUser);
-
-    $ticket->{'Owner'}         = ConvertUser( $ticket->{'Owner'} );
-    $ticket->{'Creator'}       = ConvertUser( $ticket->{'Creator'} );
-    $ticket->{'LastUpdatedBy'} = ConvertUser( $ticket->{'LastUpdatedBy'} );
-
-    if ( $ticket->{'Requestor'} ) {
-        my $watchers = $ticket->{'Requestor'};
-        my @trq = split( /, /, $watchers );
-        $ticket->{'Requestor'} = \@trq;
-    }
-    if ( $ticket->{'Cc'} ) {
-        my $watchers = $ticket->{'Cc'};
-        my @tcc = split( /, /, $watchers );
-        $ticket->{'Cc'} = \@tcc;
-    }
-    if ( $ticket->{'AdminCc'} ) {
-        my $watchers = $ticket->{'AdminCc'};
-        my @tacc = split( /, /, $watchers );
-        $ticket->{'AdminCc'} = \@tacc;
+    my $child_type = $T{$type}{children};
+    if ( $child_type and $item->{$child_type} ) {
+        my $parent_id = $T{$child_type}{parent_id};
+        foreach my $child_id (
+            sort { $a <=> $b }
+            keys %{ $item->{$child_type} }
+            )
+        {
+            my $child = $item->{$child_type}->{$child_id};
+            $child->{$parent_id} = $new_id if $parent_id;
+            _ConvertItem( $child_type, $child, $new_id );
+        }
     }
 
-    my $eid = $ticket->{'EffectiveId'};
-    $ticket->{'EffectiveId'} = '0';
+    return $new_id;
+}
 
-    my ( $newid, $msg ) = $ticketObj->Import(%$ticket);
+sub ConvertTicket      { _ConvertItem( 'Tickets',      @_ ) }
+sub ConvertTransaction { _ConvertItem( 'Transactions', @_ ) }
+sub ConvertAttachment  { _ConvertItem( 'Attachments',  @_ ) }
+sub ConvertLink        { _ConvertItem( 'Links',        @_ ) }
 
-    unless ($newid) {
-        print STDERR "Failed to create Ticket $id!!!\n";
-        return undef;
-    }
-
-    print "Created Ticket # $id : as # $newid\n";
-    $| = 1;
 
     $ticketObj->SetEffectiveId( ConvertTicket($eid) ) if ( $eid != $id );
     $ticketObj->{'_AccessibleCache'}{Created}
