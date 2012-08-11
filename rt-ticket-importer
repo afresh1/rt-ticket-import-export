@@ -167,27 +167,72 @@ sub ConvertTransaction { _ConvertItem( 'Transactions', @_ ) }
 sub ConvertAttachment  { _ConvertItem( 'Attachments',  @_ ) }
 sub ConvertLink        { _ConvertItem( 'Links',        @_ ) }
 
+sub import_ticket {
+    my ($ticket) = @_;
 
-    $ticketObj->SetEffectiveId( ConvertTicket($eid) ) if ( $eid != $id );
-    $ticketObj->{'_AccessibleCache'}{Created}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $ticketObj->{'_AccessibleCache'}{Creator}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $ticketObj->{'_AccessibleCache'}{LastUpdated}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $ticketObj->{'_AccessibleCache'}{LastUpdatedBy}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $ticketObj->SetCreated( $ticket->{'Created'} );
-    $ticketObj->SetCreator( $ticket->{'Creator'} );
-    $ticketObj->SetLastUpdated( $ticket->{'LastUpdated'} );
-    $ticketObj->SetLastUpdatedBy( $ticket->{'LastUpdatedBy'} );
+    my %t;
+    foreach my $key ( keys %{$ticket} ) {
+        my $value = $ticket->{$key};
+        next unless $value;
+
+        if ( $link_types{$key} ) {
+
+            # have to process these after all the tickets are created
+            queue_links($value);
+            next;
+        }
+        elsif ( ref $value ) {
+            next;
+        }
+        elsif ( $key eq 'Queue' ) {
+            $value = ConvertQueue($value);
+        }
+        elsif ( $user_types{$key} ) {
+            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
+                $value ];
+            next unless @{$value};
+            $value = $value->[0] if @{$value} == 1;
+        }
+
+        $t{$key} = $value;
+    }
+
+    my $eid = $t{EffectiveId};
+    $t{EffectiveId} = 0;
+
+    my $ticketObj = new RT::Ticket($RT::SystemUser);
+    my ( $newid, $msg ) = $ticketObj->Import(%t) or return;
+    print $msg and return unless $newid;
+
+  # My exporter didnt export merged tickets so we dont need to do this
+  # But it may be required and I just dont know about it.
+  #$ticketObj->SetEffectiveId(ConvertTicket($eid)) if ($eid != $ticket->{id});
+
+    $ticketObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{LastUpdated}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{LastUpdatedBy}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->SetCreated( $ticket->{Created} );
+    $ticketObj->SetCreator( $ticket->{Creator} );
+    $ticketObj->SetLastUpdated( $ticket->{LastUpdated} );
+    $ticketObj->SetLastUpdatedBy( $ticket->{LastUpdatedBy} );
 
     $ticketObj->AddCustomFieldValue(
         Field => $cf,
-        Value => "[$rtname #$id]"
+        Value => "[$rtname #$ticket->{id}]"
     );
 
-    $TICKETS{$id} = $newid;
+    foreach my $custom_field ( @{ $ticket->{CustomFields} } ) {
+        $ticketObj->AddCustomFieldValue(
+            Field => $custom_field->{Name},
+            Value => $custom_field->{Value},
+        );
+    }
+
     return $newid;
 }
 
