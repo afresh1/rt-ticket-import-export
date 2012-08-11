@@ -71,7 +71,8 @@ RT::LoadConfig();
 RT::Init();
 
 # reset the RT die signal handler, we don't need the extra info..
-$SIG{__DIE__} = "";
+$SIG{__DIE__}  = "";
+$SIG{__WARN__} = "";
 
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
