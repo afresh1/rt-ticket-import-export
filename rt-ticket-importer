@@ -397,6 +397,27 @@ sub import_link {
 
 }
 
+{
+    my @link_transactions;
+    my @links;
+
+    sub queue_link_txn { push @link_transactions, @_ }
+
+    sub queue_links {
+        push @links, grep { ref $_ eq 'HASH' and $_->{id} } @_;
+    }
+
+    sub process_queued_links {
+        while ( my $txn = shift @link_transactions ) {
+            ConvertTransaction($txn);
+        }
+
+        while ( my $link = shift @links ) {
+            ConvertLink($link);
+        }
+    }
+}
+
 opendir my $dh, $directory or die $!;
 my @files = map {"$directory/$_"}
     sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
