@@ -41,6 +41,28 @@ unless ( !$opts{'h'} && $cf && $rtname && $directory ) {
     exit;
 }
 
+my %user_types = map { $_ => 1 } qw(
+    Owner
+    Creator
+    LastUpdatedBy
+    Requestor
+    Cc
+    AdminCc
+    AddWatcher
+    DelWatcher
+    Take
+);
+
+my %link_types = map { $_ => 1 } qw(
+    DependsOn
+    DependedOnBy
+    RefersTo
+    ReferredToBy
+    MemberOf
+    MergedInto
+    HasMember
+);
+
 # clean out all the nasties from the environment..
 CleanEnv();
 
