@@ -236,69 +236,78 @@ sub import_ticket {
     return $newid;
 }
 
-sub ConvertTransaction {
+sub import_transaction {
+    my ( $transaction, $ticket_id ) = @_;
 
-    my $id = shift;
+    my %t;
+    foreach my $key ( keys %$transaction ) {
+        my $value = $transaction->{$key};
+        next unless $value;
 
-    return $TRANSACTIONS{$id} if ( $TRANSACTIONS{$id} );
+        if ( ref $value ) {
+            next;
+        }
+        elsif ( $user_types{$key} ) {
+            $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
+                $value ];
+            next unless @{$value};
+            $value = $value->[0] if @{$value} == 1;
+        }
 
-    my $transaction = $transactions->{$id};
+        $t{$key} = $value;
+    }
+
+    if ( $link_types{ $t{Type} } ) {
+        if ($ticket_id) {    # If this is the first time through don't add
+            queue_link_txn($transaction);
+            return;
+        }
+        $t{OldValue} = $E{Tickets}{ $t{OldValue} };
+        $t{NewValue} = $E{Tickets}{ $t{NewValue} };
+    }
+
+    if ( $t{Type} eq 'Set' and $t{Field} eq 'Queue' ) {
+        $t{OldValue} = ConvertQueue( $t{OldValue} );
+        $t{NewValue} = ConvertQueue( $t{NewValue} );
+    }
+
+    if ( ( $t{Type} eq 'Set' and $user_types{ $t{Field} } )
+        or $user_types{ $t{Type} } )
+    {
+        $t{OldValue} = ConvertUser( $t{OldValue} );
+        $t{NewValue} = ConvertUser( $t{NewValue} );
+    }
+
+    if ( ( $t{Type} eq 'EmailRecord' ) ) {
+        $t{OldValue} = $E{Tickets}{ $t{OldValue} } if $t{OldValue};
+        $t{NewValue} = $E{Tickets}{ $t{NewValue} } if $t{NewValue};
+    }
+
+    $t{ActivateScrips} = 0;
 
     my $transactionObj = new RT::Transaction($RT::SystemUser);
-
-    foreach my $key ( keys %$transaction ) {
-        $transaction->{$key} = undef if ( ref( $transaction->{$key} ) );
-    }
-
-    # We're cheating and only importing Ticket Transactions
-    $transaction->{'ObjectId'} = ConvertTicket( $transaction->{'ObjectId'} );
-    $transaction->{'Creator'}  = ConvertUser( $transaction->{'Creator'} );
-    return undef unless ( defined( $transaction->{'ObjectId'} ) );
-
-    if (   ( $transaction->{'Type'} eq 'Owner' )
-        || ( $transaction->{'Type'} eq 'Requestor' )
-        || ( $transaction->{'Type'} eq 'Cc' )
-        || ( $transaction->{'Type'} eq 'AdminCc' ) )
-    {
-        $transaction->{'OldValue'}
-            = ConvertUser( $transaction->{'OldValue'} );
-        $transaction->{'NewValue'}
-            = ConvertUser( $transaction->{'NewValue'} );
-    }
-
-    if (   ( $transaction->{'Type'} eq 'DependsOn' )
-        || ( $transaction->{'Type'} eq 'DependedOnBy' )
-        || ( $transaction->{'Type'} eq 'RefersTo' )
-        || ( $transaction->{'Type'} eq 'ReferredToBy' )
-        || ( $transaction->{'Type'} eq 'MemberOf' )
-        || ( $transaction->{'Type'} eq 'MergedInto' )
-        || ( $transaction->{'Type'} eq 'HasMember' ) )
-    {
-        $transaction->{'OldValue'}
-            = ConvertTicket( $transaction->{'OldValue'} );
-        $transaction->{'NewValue'}
-            = ConvertTicket( $transaction->{'NewValue'} );
-    }
-
-    $transaction->{'ActivateScrips'} = 0;
-
-    my ( $newid, $msg ) = $transactionObj->Create(%$transaction);
+    my ( $newid, $msg ) = $transactionObj->Create(%t);
 
     unless ($newid) {
-        print STDERR "Failed to create Transaction $id ($msg)!!!\n";
-        return undef;
+        print $msg;
+        return;
     }
 
-    print "Created Transaction # $id : as # $newid\n";
-    $| = 1;
-    $transactionObj->{'_AccessibleCache'}{Created}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $transactionObj->{'_AccessibleCache'}{Creator}
-        = { 'read' => 1, 'write' => 1, 'auto' => 0 };
-    $transactionObj->SetCreated( $transaction->{'Created'} );
-    $transactionObj->SetCreator( $transaction->{'Creator'} );
+    foreach my $custom_field ( @{ $transaction->{CustomFields} } ) {
+        $transactionObj->AddCustomFieldValue(
+            Field => $custom_field->{Name},
+            Value => $custom_field->{Value},
+        );
+    }
 
-    $TRANSACTIONS{$id} = $newid;
+    $| = 1;
+    $transactionObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $transactionObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $transactionObj->SetCreated( $t{Created} );
+    $transactionObj->SetCreator( $t{Creator} );
+
     return $newid;
 }
 
