@@ -81,17 +81,17 @@ eval { RT::DropSetGIDPermissions() };
 my %E;
 
 $E{Users} = {
-    1 => $RT::SystemUser,
-    6 => $RT::Nobody,
+    1 => $RT::SystemUser->Id,
+    6 => $RT::Nobody->Id,
 };
 
 sub ConvertUser {
     my ($user) = @_;
-    return $RT::Nobody unless $user;
+    return $RT::Nobody->Id unless $user;
     return $E{Users}{$user} if $E{Users}{$user};
     my $userObj = new RT::User($RT::SystemUser);
     $userObj->LoadOrCreateByEmail($user);
-    return $E{Users}{$user} = $userObj || $RT::Nobody;
+    return $E{Users}{$user} = $userObj->Id || $RT::Nobody->Id;
 }
 
 sub ConvertQueue {
