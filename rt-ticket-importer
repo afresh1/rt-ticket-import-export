@@ -26,18 +26,9 @@ use XML::Simple;
 use strict;
 use warnings;
 
-my %opts;
-getopts( 'c:r:d:h', \%opts );
-
-my $cf        = $opts{c};
-my $rtname    = $opts{r};
-my $directory = $opts{d};
-
-unless ( !$opts{h} && $cf && $rtname && $directory ) {
-    print
-        "rt-ticket-importer -d <directory> -r <source RT name> -c <CustomfieldId>\n";
-    exit;
-}
+my $cf;
+my $rtname;
+my $directory;
 
 my %user_types = map { $_ => 1 } qw(
     Owner
@@ -76,6 +67,8 @@ $SIG{__WARN__} = "";
 
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
+
+main() unless caller;
 
 # Keep track of what has been converted.
 my %E;
@@ -403,14 +396,10 @@ sub import_link {
     }
 }
 
-opendir my $dh, $directory or die $!;
-my @files = map {"$directory/$_"}
-    sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
-closedir $dh;
+sub read_file {
+    my ($file) = @_;
 
-foreach my $file (@files) {
-    warn "Converting $file\n";
-    my $ticket = XMLin(
+    return XMLin(
         $file,
         SuppressEmpty => 1,
         GroupTags     => {
@@ -421,7 +410,34 @@ foreach my $file (@files) {
         ForceArray => [qw( Transaction Attachment CustomField )],
         KeyAttr    => { Transaction => '+id', Attachment => '+id' },
     );
-    ConvertTicket($ticket);
 }
 
-process_queued_links();
+sub main {
+    my %opts;
+    getopts( 'c:r:d:h', \%opts );
+
+    $cf        = $opts{c};
+    $rtname    = $opts{r};
+    $directory = $opts{d};
+
+    unless ( !$opts{h} && $cf && $rtname && $directory ) {
+        print
+            "rt-ticket-importer -d <directory> -r <source RT name> -c <CustomfieldId>\n";
+        exit;
+    }
+
+    opendir my $dh, $directory or die $!;
+    my @files = map {"$directory/$_"}
+        sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
+    closedir $dh;
+
+    foreach my $file (@files) {
+        warn "Converting $file\n";
+        my $ticket = read_file($file);
+        ConvertTicket($ticket);
+    }
+
+    process_queued_links();
+}
+
+1;
