@@ -3,40 +3,63 @@
 # This script outputs all reminders that are due within the next e.g. two
 # days and mails the result to the corresponding owners.
 #
-die "This no longer works, please fix it and send me the changes!";
 package RT::Importer;
 
 #use lib ("/etc/request-tracker3.6", "/usr/lib/rt/",
 #		 "/usr/local/share/request-tracker3.6/lib");
-use lib ("/etc/request-tracker3.6", "/usr/share/request-tracker3.6/lib",
-		 "/usr/local/share/request-tracker3.6/lib");
+use lib (
+    "/etc/request-tracker3.6",
+    "/usr/share/request-tracker3.6/lib",
+    "/usr/local/share/request-tracker3.6/lib"
+);
 
 use RT::Interface::CLI qw(CleanEnv GetCurrentUser);
-use RT::Ticket;
-use RT::User;
 use RT::Attachment;
+use RT::Ticket;
 use RT::Transaction;
+use RT::User;
+
+use Getopt::Std;
 use MIME::Base64;
-
-use Data::Dumper;
-
 use XML::Simple;
 
 use strict;
-
-use Getopt::Std;
+use warnings;
 
 my %opts;
-getopts('c:r:f:h', \%opts);
+getopts( 'c:r:d:h', \%opts );
 
-my $cf=$opts{'c'};
-my $rtname=$opts{'r'};
-my $file=$opts{'f'};
+my $cf        = $opts{c};
+my $rtname    = $opts{r};
+my $directory = $opts{d};
 
-unless (!$opts{'h'} && $cf && $rtname && $file) {
-	print "rt-ticket-importer -f <filename> -r <source RT name> -c <CustomfieldId>\n";
-	exit;
+unless ( !$opts{h} && $cf && $rtname && $directory ) {
+    print
+        "rt-ticket-importer -d <directory> -r <source RT name> -c <CustomfieldId>\n";
+    exit;
 }
+
+my %user_types = map { $_ => 1 } qw(
+    Owner
+    Creator
+    LastUpdatedBy
+    Requestor
+    Cc
+    AdminCc
+    AddWatcher
+    DelWatcher
+    Take
+);
+
+my %link_types = map { $_ => 1 } qw(
+    DependsOn
+    DependedOnBy
+    RefersTo
+    ReferredToBy
+    MemberOf
+    MergedInto
+    HasMember
+);
 
 # clean out all the nasties from the environment..
 CleanEnv();
@@ -48,263 +71,353 @@ RT::LoadConfig();
 RT::Init();
 
 # reset the RT die signal handler, we don't need the extra info..
-$SIG{__DIE__} = "";
+$SIG{__DIE__}  = "";
+$SIG{__WARN__} = "";
 
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
 
+# Keep track of what has been converted.
+my %E;
 
-my $data = XMLin($file);
-
-print STDERR "File Loaded\n";
-
-my $attachments = $data->{'Attachments'};
-my $links = $data->{'Links'};
-my $transactions = $data->{'Transactions'};
-my $tickets = $data->{'Tickets'};
-my %USERS;
-my %TICKETS;
-my %TRANSACTIONS;
-my %LINKS;
-my %ATTACHMENTS;
+$E{Users} = {
+    1 => $RT::SystemUser->Id,
+    6 => $RT::Nobody->Id,
+};
 
 sub ConvertUser {
-	my $user = shift;
-	return $RT::Nobody->Id unless ($user) ;
-	return $USERS{$user} if ($USERS{$user});
-	my $userObj = new RT::User($RT::SystemUser);
-	$userObj->LoadOrCreateByEmail($user);
-	$USERS{$user} = $userObj->Id;
-	return $USERS{$user};
+    my ($user) = @_;
+    return $RT::Nobody->Id unless $user;
+    return $E{Users}{$user} if $E{Users}{$user};
+    my $userObj = new RT::User($RT::SystemUser);
+    $userObj->LoadOrCreateByEmail($user);
+    return $E{Users}{$user} = $userObj->Id || $RT::Nobody->Id;
 }
 
-sub ConvertTicket {
-
-	my $id = shift;
-	return $TICKETS{$id} if ($TICKETS{$id});
-	return undef unless ($id);
-
-	my $ticket = $tickets->{$id};
-	return undef unless (defined($ticket));
-
-	foreach my $key (keys %$ticket) {
-		$ticket->{$key} = undef if (ref($ticket->{$key}));
-	}
-
-	my $ticketObj = new RT::Ticket($RT::SystemUser);
-
-	$ticket->{'Owner'} = ConvertUser($ticket->{'Owner'});
-	$ticket->{'Creator'} = ConvertUser($ticket->{'Creator'});
-	$ticket->{'LastUpdatedBy'} = ConvertUser($ticket->{'LastUpdatedBy'});
-	
-	if ($ticket->{'Requestor'}) {
-		my $watchers = $ticket->{'Requestor'};
-		my @trq = split(/, /, $watchers);
-		$ticket->{'Requestor'} = \@trq;
-	}
-	if ($ticket->{'Cc'}) {
-		my $watchers = $ticket->{'Cc'};
-		my @tcc = split(/, /, $watchers);
-		$ticket->{'Cc'} = \@tcc;
-	}
-	if ($ticket->{'AdminCc'}) {
-		my $watchers = $ticket->{'AdminCc'};
-		my @tacc = split(/, /, $watchers);
-		$ticket->{'AdminCc'} = \@tacc;
-	}
-
-	my $eid = $ticket->{'EffectiveId'};
-	$ticket->{'EffectiveId'} = '0';
-	
-	my ($newid, $msg) = $ticketObj->Import( %$ticket );
-
-	unless ($newid) {
-		print STDERR "Failed to create Ticket $id!!!\n";
-		return undef;
-	}
-
-	print "Created Ticket # $id : as # $newid\n";
-	$| = 1;
-
-	$ticketObj->SetEffectiveId(ConvertTicket($eid)) if ($eid != $id);
-    $ticketObj->{'_AccessibleCache'}{Created}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $ticketObj->{'_AccessibleCache'}{Creator}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $ticketObj->{'_AccessibleCache'}{LastUpdated}   = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $ticketObj->{'_AccessibleCache'}{LastUpdatedBy} = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-	$ticketObj->SetCreated($ticket->{'Created'});
-	$ticketObj->SetCreator($ticket->{'Creator'});
-	$ticketObj->SetLastUpdated($ticket->{'LastUpdated'});
-	$ticketObj->SetLastUpdatedBy($ticket->{'LastUpdatedBy'});
-
-	$ticketObj->AddCustomFieldValue(Field => $cf,
-				Value => "[$rtname #$id]" );
-
-	$TICKETS{$id} = $newid;
-	return $newid;
+sub ConvertQueue {
+    my ($queue) = @_;
+    return $E{Queues}{$queue} if $E{Queues}{$queue};
+    my $queueObj = new RT::Queue($RT::SystemUser);
+    $queueObj->Load($queue);
+    return $E{Queues}{$queue} = $queueObj || ConvertQueue('General');
 }
 
-sub ConvertTransaction {
+sub _ConvertItem {
+    my $type = shift;
+    my $item = shift;
 
-	my $id = shift;
+    my %T = (
+        Tickets => {
+            import   => \&import_ticket,
+            children => 'Transactions',
+        },
+        Transactions => {
+            import    => \&import_transaction,
+            children  => 'Attachments',
+            parent_id => 'ObjectId',
+        },
+        Attachments => {
+            import    => \&import_attachment,
+            parent_id => 'TransactionId',
+        },
+        Links => { import => \&import_link, }
+    );
 
-	return $TRANSACTIONS{$id} if ($TRANSACTIONS{$id});
+    die "Unknown type [$type]!" unless $T{$type};
 
-	my $transaction = $transactions->{$id};
+    my $old_id = $item->{id};
+    my $new_id = $E{$type}{$old_id} || $T{$type}{import}( $item, @_ );
+    if ($new_id) {
+        $E{$type}{$old_id} = $new_id;
+        print "Created $type #$old_id\n";
+    }
+    else {
 
-	my $transactionObj = new RT::Transaction($RT::SystemUser);
+        # Get rid of the old id to try to create with a new id
+        delete $item->{id};
+        $new_id = $T{$type}{import}( $item, @_ );
+        $E{$type}{$old_id} = $new_id;
+        print "Created $type #$old_id as #$new_id\n";
+    }
+    unless ( $E{$type}{$old_id} ) {
+        print STDERR "Failed to create $type $old_id!!!\n";
+        return;
+    }
 
-	foreach my $key (keys %$transaction) {
-		$transaction->{$key} = undef if (ref($transaction->{$key}));
-	}
+    my $child_type = $T{$type}{children};
+    if ( $child_type and $item->{$child_type} ) {
+        my $parent_id = $T{$child_type}{parent_id};
+        foreach my $child_id (
+            sort { $a <=> $b }
+            keys %{ $item->{$child_type} }
+            )
+        {
+            my $child = $item->{$child_type}->{$child_id};
+            $child->{$parent_id} = $new_id if $parent_id;
+            _ConvertItem( $child_type, $child, $new_id );
+        }
+    }
 
-	# We're cheating and only importing Ticket Transactions
-	$transaction->{'ObjectId'} = ConvertTicket($transaction->{'ObjectId'});
-	$transaction->{'Creator'} = ConvertUser($transaction->{'Creator'});
-	return undef unless (defined($transaction->{'ObjectId'}));
-	
-	if (
-		($transaction->{'Type'} eq 'Owner')  ||
-		($transaction->{'Type'} eq 'Requestor')  ||
-		($transaction->{'Type'} eq 'Cc')  ||
-		($transaction->{'Type'} eq 'AdminCc') ) 
-	{
-		$transaction->{'OldValue'} = ConvertUser($transaction->{'OldValue'});
-		$transaction->{'NewValue'} = ConvertUser($transaction->{'NewValue'});
-	}
-
-	if (
-		($transaction->{'Type'} eq 'DependsOn')  ||
-		($transaction->{'Type'} eq 'DependedOnBy')  ||
-		($transaction->{'Type'} eq 'RefersTo')  ||
-		($transaction->{'Type'} eq 'ReferredToBy')  ||
-		($transaction->{'Type'} eq 'MemberOf')  ||
-		($transaction->{'Type'} eq 'MergedInto')  ||
-		($transaction->{'Type'} eq 'HasMember') ) 
-	{
-		$transaction->{'OldValue'} =ConvertTicket($transaction->{'OldValue'});
-		$transaction->{'NewValue'} =ConvertTicket($transaction->{'NewValue'});
-	}
-
-	$transaction->{'ActivateScrips'} = 0;
-
-	my ($newid, $msg) =  $transactionObj->Create( %$transaction );
-
-	unless ($newid) {
-		print STDERR "Failed to create Transaction $id ($msg)!!!\n";
-		return undef;
-	}
-
-	print "Created Transaction # $id : as # $newid\n";
-	$| = 1;
-    $transactionObj->{'_AccessibleCache'}{Created}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $transactionObj->{'_AccessibleCache'}{Creator}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-	$transactionObj->SetCreated($transaction->{'Created'});
-	$transactionObj->SetCreator($transaction->{'Creator'});
-
-	$TRANSACTIONS{$id} = $newid;
-	return $newid;
+    return $new_id;
 }
 
+sub ConvertTicket      { _ConvertItem( 'Tickets',      @_ ) }
+sub ConvertTransaction { _ConvertItem( 'Transactions', @_ ) }
+sub ConvertAttachment  { _ConvertItem( 'Attachments',  @_ ) }
+sub ConvertLink        { _ConvertItem( 'Links',        @_ ) }
 
-sub ConvertAttachment {
-	my $id = shift;
+sub _pick_apart {
+    my ($item) = @_;
 
-	return $ATTACHMENTS{$id} if ($ATTACHMENTS{$id});
-	my $attachment = $attachments->{$id};
+    my %i;
+    foreach my $key ( keys %{$item} ) {
+        my $value = $item->{$key};
+        next unless $value;
 
-	foreach my $key (keys %$attachment) {
-		$attachment->{$key} = undef if (ref($attachment->{$key}));
-	}
+        $key = 'Requestor' if $key eq 'Requestors';
 
-	if ($attachment->{'Parent'}) {
-		my $parent = $attachment->{'Parent'} ;
-		$attachment->{'Parent'} = ConvertAttachment($parent);
-	}
+        if ( $link_types{$key} ) {
 
-	my $attachObj = new RT::Attachment($RT::SystemUser);
+            # have to process these after all the tickets are created
+            queue_links($value);
+            next;
+        }
+        elsif ( ref $value ) {
+            next;
+        }
+        elsif ( $key eq 'Queue' ) {
+            $value = ConvertQueue($value);
+        }
+        elsif ( $user_types{$key} ) {
+             $value = [ grep {$_} map { ConvertUser($_) } split /\s*,\s*/,
+                $value ];
+            next unless @{$value};
+            if (   $key eq 'Owner'
+                or $key eq 'Creator'
+                or $key eq 'LastUpdatedBy'
+                or $key eq 'Take' )
+            {
+                $value = $value->[0];
+            }
+        }
 
-	$attachment->{'Creator'} = ConvertUser($attachment->{'Creator'});
+        $i{$key} = $value;
+    }
 
-	$attachment->{'TransactionId'} = 
-				ConvertTransaction($attachment->{'TransactionId'});
-	return undef unless (defined ($attachment->{'TransactionId'}));
+    return %i;
+}
 
-	Encode::_utf8_off($attachment->{'Content'});
-	$attachment->{'Content'} = decode_base64($attachment->{'Content'});
+sub import_ticket {
+    my ($ticket) = @_;
 
-	my ($newid, $msg) = $attachObj->Import( %$attachment );
+    my %t = _pick_apart($ticket);
+    my $eid = $t{EffectiveId};
+    $t{EffectiveId} = 0;
 
-	unless ($newid) {
-		print STDERR "Failed to create Attachment $id ($msg)!!!\n";
-		return undef;
-	}
+    my $ticketObj = new RT::Ticket($RT::SystemUser);
+    my ( $newid, $msg ) = $ticketObj->Import(%t) or return;
+    print $msg and return unless $newid;
 
-	print "Created Attachment # $id : as # $newid\n";
-	$| = 1;
-    $attachObj->{'_AccessibleCache'}{Created}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $attachObj->{'_AccessibleCache'}{Creator}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-	$attachObj->SetCreated($attachment->{'Created'});
-	$attachObj->SetCreator($attachment->{'Creator'});
-	$ATTACHMENTS{$id} = $newid;
-	return $newid;
+  # My exporter didnt export merged tickets so we dont need to do this
+  # But it may be required and I just dont know about it.
+  #$ticketObj->SetEffectiveId(ConvertTicket($eid)) if ($eid != $ticket->{id});
+
+    $ticketObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{LastUpdated}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->{_AccessibleCache}{LastUpdatedBy}
+        = { read => 1, write => 1, auto => 0 };
+    $ticketObj->SetCreated( $ticket->{Created} );
+    $ticketObj->SetCreator( $ticket->{Creator} );
+    $ticketObj->SetLastUpdated( $ticket->{LastUpdated} );
+    $ticketObj->SetLastUpdatedBy( $ticket->{LastUpdatedBy} );
+
+    $ticketObj->AddCustomFieldValue(
+        Field => $cf,
+        Value => "[$rtname #$ticket->{id}]"
+    );
+
+    foreach my $custom_field ( @{ $ticket->{CustomFields} } ) {
+        $ticketObj->AddCustomFieldValue(
+            Field => $custom_field->{Name},
+            Value => $custom_field->{Value},
+        );
+    }
+
+    return $newid;
+}
+
+sub import_transaction {
+    my ( $transaction, $ticket_id ) = @_;
+
+    my %t = _pick_apart( $transaction );
+
+    if ( $link_types{ $t{Type} } ) {
+        if ($ticket_id) {    # If this is the first time through don't add
+            queue_link_txn($transaction);
+            return;
+        }
+        $t{OldValue} = $E{Tickets}{ $t{OldValue} };
+        $t{NewValue} = $E{Tickets}{ $t{NewValue} };
+    }
+
+    if ( $t{Type} eq 'Set' and $t{Field} eq 'Queue' ) {
+        $t{OldValue} = ConvertQueue( $t{OldValue} );
+        $t{NewValue} = ConvertQueue( $t{NewValue} );
+    }
+
+    if ( ( $t{Type} eq 'Set' and $user_types{ $t{Field} } )
+        or $user_types{ $t{Type} } )
+    {
+        $t{OldValue} = ConvertUser( $t{OldValue} );
+        $t{NewValue} = ConvertUser( $t{NewValue} );
+    }
+
+    if ( ( $t{Type} eq 'EmailRecord' ) ) {
+        $t{OldValue} = $E{Tickets}{ $t{OldValue} } if $t{OldValue};
+        $t{NewValue} = $E{Tickets}{ $t{NewValue} } if $t{NewValue};
+    }
+
+    $t{ActivateScrips} = 0;
+
+    my $transactionObj = new RT::Transaction($RT::SystemUser);
+    my ( $newid, $msg ) = $transactionObj->Create(%t);
+
+    unless ($newid) {
+        print $msg;
+        return;
+    }
+
+    foreach my $custom_field ( @{ $transaction->{CustomFields} } ) {
+        $transactionObj->AddCustomFieldValue(
+            Field => $custom_field->{Name},
+            Value => $custom_field->{Value},
+        );
+    }
+
+    $| = 1;
+    $transactionObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $transactionObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $transactionObj->SetCreated( $t{Created} );
+    $transactionObj->SetCreator( $t{Creator} );
+
+    return $newid;
+}
+
+sub import_attachment {
+    my ($attachment) = @_;
+
+    my %a = _pick_apart( $attachment );
+    delete $a{Owner};
+
+    if ( $a{Parent} ) {
+
+        # I guess we just have to hope this exists
+        my $parent = $a{Parent};
+        $a{Parent} = $E{Attachments}{$parent};
+    }
+
+    if ( $a{Content} ) {
+        Encode::_utf8_off( $a{Content} );
+        $a{Content} = decode_base64( $a{Content} );
+    }
+    else { $a{Content} = '' }
+
+    my $attachObj = new RT::Attachment($RT::SystemUser);
+    my ( $newid, $msg ) = $attachObj->Import(%a);
+    print $msg and return unless $newid;
+
+    $attachObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $attachObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $attachObj->SetCreated( $a{Created} );
+    $attachObj->SetCreator( $a{Creator} );
+
+    return $newid;
+}
+
+sub import_link {
+    my ($link) = @_;
+
+    my $base = $link->{Base};
+    $base =~ /([0-9]*)$/;
+    $base = $1;
+    my $target = $link->{Target};
+    $target =~ /([0-9]*)$/;
+    $target = $1;
+
+    my $linkObj = new RT::Link($RT::SystemUser);
+    my $newid   = $linkObj->Create(
+        Base   => $E{Tickets}{$base},
+        Target => $E{Tickets}{$target},
+        Type   => $link->{Type}
+    );
+
+    return unless $newid;
+
+    $linkObj->{_AccessibleCache}{Created}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{Creator}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{LastUpdated}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->{_AccessibleCache}{LastUpdatedBy}
+        = { read => 1, write => 1, auto => 0 };
+    $linkObj->SetCreated( $link->{Created} );
+    $linkObj->SetCreator( ConvertUser( $link->{Creator} ) );
+    $linkObj->SetLastUpdated( $link->{LastUpdated} );
+    $linkObj->SetLastUpdatedBy( $link->{LastUpdatedBy} );
+
+    return $newid;
 
 }
 
-sub ConvertLink {
-	my $id = shift;
+{
+    my @link_transactions;
+    my @links;
 
-	return $LINKS{$id} if ($LINKS{$id});
+    sub queue_link_txn { push @link_transactions, @_ }
 
-	my $link = $links->{$id};
-	my $linkObj = new RT::Link($RT::SystemUser);
+    sub queue_links {
+        push @links, grep { ref $_ eq 'HASH' and $_->{id} } @_;
+    }
 
-	my $base = $link->{'Base'};
-	$base =~ /([0-9]*)$/;
-	$base = $1;
-	my $target = $link->{'Target'};
-	$target =~ /([0-9]*)$/;
-	$target = $1;
+    sub process_queued_links {
+        while ( my $txn = shift @link_transactions ) {
+            ConvertTransaction($txn);
+        }
 
-	my $newid = $linkObj->Create(
-			Base => ConvertTicket($base),
-			Target => ConvertTicket($target),
-			Type => $link->{'Type'}
-		);
-
-	if ($newid == 0) {
-		print STDERR "Failed to create Link $id!!!\n";
-		return undef
-	}
-
-	print "Created Link # $id : as # $newid\n";
-	$| = 1;
-	$LINKS{$id} = $newid;
-    $linkObj->{'_AccessibleCache'}{Created}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $linkObj->{'_AccessibleCache'}{Creator}       = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $linkObj->{'_AccessibleCache'}{LastUpdated}   = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-    $linkObj->{'_AccessibleCache'}{LastUpdatedBy} = { 'read' => 1, 'write' => 1, 'auto'  => 0 };
-	$linkObj->SetCreated($link->{'Created'});
-	$linkObj->SetCreator(ConvertUser($link->{'Creator'}));
-	$linkObj->SetLastUpdated($link->{'LastUpdated'});
-	$linkObj->SetLastUpdatedBy($link->{'LastUpdatedBy'});
-
-	return $newid;
-
+        while ( my $link = shift @links ) {
+            ConvertLink($link);
+        }
+    }
 }
 
-foreach (sort {$a <=> $b} keys %$tickets) {
-	ConvertTicket($_);
+opendir my $dh, $directory or die $!;
+my @files = map {"$directory/$_"}
+    sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
+closedir $dh;
+
+foreach my $file (@files) {
+    warn "Converting $file\n";
+    my $ticket = XMLin(
+        $file,
+        SuppressEmpty => 1,
+        GroupTags     => {
+            Transactions => 'Transaction',
+            Attachments  => 'Attachment',
+            CustomFields => 'CustomField',
+        },
+        ForceArray => [qw( Transaction Attachment CustomField )],
+        KeyAttr    => { Transaction => '+id', Attachment => '+id' },
+    );
+    ConvertTicket($ticket);
 }
 
-foreach (sort {$a <=> $b}  keys %$transactions ) {
-	next unless ($transactions->{$_}->{'ObjectType'} eq 'RT::Ticket');
-	ConvertTransaction($_);
-}
-
-foreach (sort {$a <=> $b}  keys %$attachments ) {
-	ConvertAttachment($_);
-}
-
-foreach (sort {$a <=> $b}  keys %$links ) {
-	ConvertLink($_);
-}
+process_queued_links();

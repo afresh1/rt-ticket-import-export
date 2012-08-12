@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# This resets an SQLite RT database on OpenBSD anyway
+# It was very helpful when I was testing my import.
+
+rm /var/www/rt3/rt4
+rt-setup-database --action init   --dba-password=x
+if [ -e initialdata ]; then
+	rt-setup-database --action insert --dba-password=x --datafile initialdata 
+fi
+/etc/rc.d/rt restart
+
