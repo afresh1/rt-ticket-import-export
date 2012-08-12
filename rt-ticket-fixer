@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+require 'rt-ticket-importer';
+
+# Somehow I lost the people attached to some of my tickets
+# Fortunately I had a backup where they existed but now I need to merge them
+# This only works because I imported my tickets into a clean system
+#    so they got the same ticket ID
+
+my $directory = 'old_tickets';
+
+opendir my $dh, $directory or die $!;
+my @files = map {"$directory/$_"}
+    sort grep { $_ =~ /Ticket_\d+\.xml$/i } readdir $dh;
+closedir $dh;
+
+foreach my $file (@files) {
+    warn "Converting $file\n";
+    my $ticket = RT::Importer::read_file($file);
+    FixTicket($ticket);
+}
+
+
+sub FixTicket {
+    my ($ticket) = @_;
+
+    my %t = RT::Importer::_pick_apart($ticket);
+
+    my $ticketObj = new RT::Ticket($RT::SystemUser);
+    $ticketObj->Load($t{id}) or return;
+
+    foreach my $type (qw( Requestor Cc AdminCc )) {
+        next unless $t{$type};
+
+        my $method = $type . 'Addresses';
+        my $users = $ticketObj->$method;
+        next if $users; # Don't change what we already have
+
+        foreach my $id ( @{ $t{$type} } ) {
+            $ticketObj->_AddWatcher(
+                Type        => $type,
+                PrincipalId => $id,
+            );
+        }
+    }
+}
