@@ -349,15 +349,17 @@ sub import_link {
 
     my $base = $link->{Base};
     $base =~ /([0-9]*)$/;
-    $base = $1;
+    $base = $E{Tickets}{$1};
     my $target = $link->{Target};
     $target =~ /([0-9]*)$/;
-    $target = $1;
+    $target = $E{Tickets}{$1};
+
+    return unless $base and $target;
 
     my $linkObj = new RT::Link($RT::SystemUser);
     my $newid   = $linkObj->Create(
-        Base   => $E{Tickets}{$base},
-        Target => $E{Tickets}{$target},
+        Base   => $base,
+        Target => $target,
         Type   => $link->{Type}
     );
 
