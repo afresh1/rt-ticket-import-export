@@ -136,8 +136,10 @@ sub _ConvertItem {
         # Get rid of the old id to try to create with a new id
         delete $item->{id};
         $new_id = $T{$type}{import}( $item, @_ );
-        $E{$type}{$old_id} = $new_id;
-        print "Created $type #$old_id as #$new_id\n";
+        if ($new_id) {
+            $E{$type}{$old_id} = $new_id;
+            print "Created $type #$old_id as #$new_id\n";
+        }
     }
     unless ( $E{$type}{$old_id} ) {
         print STDERR "Failed to create $type $old_id!!!\n";
