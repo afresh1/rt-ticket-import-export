@@ -293,7 +293,6 @@ sub import_transaction {
         );
     }
 
-    $| = 1;
     $transactionObj->{_AccessibleCache}{Created}
         = { read => 1, write => 1, auto => 0 };
     $transactionObj->{_AccessibleCache}{Creator}
