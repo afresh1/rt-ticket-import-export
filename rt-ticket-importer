@@ -68,8 +68,6 @@ $SIG{__WARN__} = "";
 # drop setgid permissions, which is version 3.0 specific
 eval { RT::DropSetGIDPermissions() };
 
-main() unless caller;
-
 # Keep track of what has been converted.
 my %E;
 
@@ -77,6 +75,8 @@ $E{Users} = {
     1 => $RT::SystemUser->Id,
     6 => $RT::Nobody->Id,
 };
+
+main() unless caller;
 
 sub ConvertUser {
     my ($user) = @_;
