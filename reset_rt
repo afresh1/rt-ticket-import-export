@@ -1,12 +1,13 @@
 #!/bin/sh
 
-# This resets an SQLite RT database on OpenBSD anyway
+# This resets a PostgreSQL RT database on OpenBSD anyway
 # It was very helpful when I was testing my import.
 
-rm /var/www/rt3/rt4
-rt-setup-database --action init   --dba-password=x
+/etc/rc.d/rt stop
+psql -U _postgresql -d postgres -c 'DROP DATABASE rt4'
+rt-setup-database --action init --dba-password='Yd"L4l{B;?%@5LqC/D' --dba _postgresql
 if [ -e initialdata ]; then
-	rt-setup-database --action insert --dba-password=x --datafile initialdata 
+	rt-setup-database --action insert --dba-password='Yd"L4l{B;?%@5LqC/D' --dba _postgresql --datafile initialdata 
 fi
-/etc/rc.d/rt restart
+/etc/rc.d/rt start
 
