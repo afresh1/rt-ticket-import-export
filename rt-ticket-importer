@@ -153,7 +153,7 @@ sub _ConvertItem {
         }
     }
 
-    foreach my $key (qw( Creator Created LastUpdatedBy LastUpdated )) {
+    foreach my $key (qw( LastUpdatedBy LastUpdated )) {
         my $value = $item->{$key} or next;
 
         $value = ConvertUser($value)
