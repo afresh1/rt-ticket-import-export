@@ -119,7 +119,7 @@ sub _ConvertItem {
     die "Unknown type [$type]!" unless $T{$type};
 
     my $old_id = $item->{id};
-    my $new_id = $E{$type}{$old_id} || $T{$type}{import}( $item, @_ );
+    my ($new_id, $obj) = $E{$type}{$old_id} || $T{$type}{import}( $item, @_ );
     if ($new_id) {
         $E{$type}{$old_id} = $new_id;
         print "Created $type #$old_id\n";
@@ -128,7 +128,7 @@ sub _ConvertItem {
 
         # Get rid of the old id to try to create with a new id
         delete $item->{id};
-        $new_id = $T{$type}{import}( $item, @_ );
+        ($new_id, $obj) = $T{$type}{import}( $item, @_ );
         if ($new_id) {
             $E{$type}{$old_id} = $new_id;
             print "Created $type #$old_id as #$new_id\n";
@@ -151,6 +151,18 @@ sub _ConvertItem {
             $child->{$parent_id} = $new_id if $parent_id;
             _ConvertItem( $child_type, $child, $new_id );
         }
+    }
+
+    foreach my $key (qw( Creator Created LastUpdatedBy LastUpdated )) {
+        my $value = $item->{$key} or next;
+
+        $value = ConvertUser($value)
+            if $key eq 'Creator' or $key eq 'LastUpdatedBy';
+
+        my $method = "Set$key";
+        $obj->{_AccessibleCache}{$key}
+            = { read => 1, write => 1, auto => 0 };
+        $obj->$method($value);
     }
 
     return $new_id;
@@ -217,19 +229,6 @@ sub import_ticket {
   # But it may be required and I just dont know about it.
   #$ticketObj->SetEffectiveId(ConvertTicket($eid)) if ($eid != $ticket->{id});
 
-    $ticketObj->{_AccessibleCache}{Created}
-        = { read => 1, write => 1, auto => 0 };
-    $ticketObj->{_AccessibleCache}{Creator}
-        = { read => 1, write => 1, auto => 0 };
-    $ticketObj->{_AccessibleCache}{LastUpdated}
-        = { read => 1, write => 1, auto => 0 };
-    $ticketObj->{_AccessibleCache}{LastUpdatedBy}
-        = { read => 1, write => 1, auto => 0 };
-    $ticketObj->SetCreated( $t{Created} );
-    $ticketObj->SetCreator( $t{Creator} );
-    $ticketObj->SetLastUpdated( $t{LastUpdated} );
-    $ticketObj->SetLastUpdatedBy( $t{LastUpdatedBy} );
-
     $ticketObj->AddCustomFieldValue(
         Field => $cf,
         Value => "[$rtname #$t{id}]"
@@ -242,7 +241,7 @@ sub import_ticket {
         );
     }
 
-    return $newid;
+    return $newid, $ticketObj;
 }
 
 sub import_transaction {
@@ -293,14 +292,7 @@ sub import_transaction {
         );
     }
 
-    $transactionObj->{_AccessibleCache}{Created}
-        = { read => 1, write => 1, auto => 0 };
-    $transactionObj->{_AccessibleCache}{Creator}
-        = { read => 1, write => 1, auto => 0 };
-    $transactionObj->SetCreated( $t{Created} );
-    $transactionObj->SetCreator( $t{Creator} );
-
-    return $newid;
+    return $newid, $transactionObj;
 }
 
 sub import_attachment {
@@ -326,14 +318,7 @@ sub import_attachment {
     my ( $newid, $msg ) = $attachObj->Import(%a);
     print $msg and return unless $newid;
 
-    $attachObj->{_AccessibleCache}{Created}
-        = { read => 1, write => 1, auto => 0 };
-    $attachObj->{_AccessibleCache}{Creator}
-        = { read => 1, write => 1, auto => 0 };
-    $attachObj->SetCreated( $a{Created} );
-    $attachObj->SetCreator( $a{Creator} );
-
-    return $newid;
+    return $newid, $attachObj;
 }
 
 sub import_link {
@@ -356,22 +341,7 @@ sub import_link {
     );
 
     return unless $newid;
-
-    $linkObj->{_AccessibleCache}{Created}
-        = { read => 1, write => 1, auto => 0 };
-    $linkObj->{_AccessibleCache}{Creator}
-        = { read => 1, write => 1, auto => 0 };
-    $linkObj->{_AccessibleCache}{LastUpdated}
-        = { read => 1, write => 1, auto => 0 };
-    $linkObj->{_AccessibleCache}{LastUpdatedBy}
-        = { read => 1, write => 1, auto => 0 };
-    $linkObj->SetCreated( $link->{Created} );
-    $linkObj->SetCreator( ConvertUser( $link->{Creator} ) );
-    $linkObj->SetLastUpdated( $link->{LastUpdated} );
-    $linkObj->SetLastUpdatedBy( $link->{LastUpdatedBy} );
-
-    return $newid;
-
+    return $newid, $linkObj;
 }
 
 {
