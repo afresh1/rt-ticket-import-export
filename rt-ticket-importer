@@ -225,14 +225,14 @@ sub import_ticket {
         = { read => 1, write => 1, auto => 0 };
     $ticketObj->{_AccessibleCache}{LastUpdatedBy}
         = { read => 1, write => 1, auto => 0 };
-    $ticketObj->SetCreated( $ticket->{Created} );
-    $ticketObj->SetCreator( $ticket->{Creator} );
-    $ticketObj->SetLastUpdated( $ticket->{LastUpdated} );
-    $ticketObj->SetLastUpdatedBy( $ticket->{LastUpdatedBy} );
+    $ticketObj->SetCreated( $t{Created} );
+    $ticketObj->SetCreator( $t{Creator} );
+    $ticketObj->SetLastUpdated( $t{LastUpdated} );
+    $ticketObj->SetLastUpdatedBy( $t{LastUpdatedBy} );
 
     $ticketObj->AddCustomFieldValue(
         Field => $cf,
-        Value => "[$rtname #$ticket->{id}]"
+        Value => "[$rtname #$t{id}]"
     );
 
     foreach my $custom_field ( @{ $ticket->{CustomFields} } ) {
