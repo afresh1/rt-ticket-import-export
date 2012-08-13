@@ -155,14 +155,10 @@ sub _ConvertItem {
 
     foreach my $key (qw( LastUpdatedBy LastUpdated )) {
         my $value = $item->{$key} or next;
+        $value = ConvertUser($value) if $key eq 'LastUpdatedBy';
 
-        $value = ConvertUser($value)
-            if $key eq 'Creator' or $key eq 'LastUpdatedBy';
-
-        my $method = "Set$key";
-        $obj->{_AccessibleCache}{$key}
-            = { read => 1, write => 1, auto => 0 };
-        $obj->$method($value);
+        # Annoying to dig into the guts this far!
+        $obj->__Set( Field => $key, Value => $value );
     }
 
     return $new_id;
