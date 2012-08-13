@@ -13,6 +13,18 @@ my %queues;
 my %lut;
 my %users;
 
+my %xmlopts       = (
+    RootName      => 'Ticket',
+    NoAttr        => 1,
+    SuppressEmpty => 1,
+    XMLDecl       => '<?xml version="1.0" encoding="UTF-8"?>',
+    GroupTags => {
+        CustomFields => 'CustomField',
+        Transactions => 'Transaction',
+        Attachments  => 'Attachment',
+    },
+);
+
 my %user_types = map { $_ => 1 } qw(
     Owner
     Creator
@@ -222,12 +234,6 @@ sub export_ticket {
 
     my $filename = sprintf "Ticket_%05d.xml", $data->{id};
     open my $fh, '>', $filename or die $!;
-    print $fh XMLout(
-        $data,
-        RootName      => 'Ticket',
-        NoAttr        => 1,
-        SuppressEmpty => '',
-        XMLDecl       => '<?xml version="1.0" encoding="UTF-8"?>',
-    );
+    print $fh XMLout( $data, %xmlopts );
     close $fh;
 }
