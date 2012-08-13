@@ -153,6 +153,8 @@ sub _ConvertItem {
         }
     }
 
+    return $new_id unless $obj;
+
     foreach my $key (qw( LastUpdatedBy LastUpdated )) {
         my $value = $item->{$key} or next;
         $value = ConvertUser($value) if $key eq 'LastUpdatedBy';
