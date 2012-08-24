@@ -119,10 +119,12 @@ sub _ConvertItem {
     die "Unknown type [$type]!" unless $T{$type};
 
     my $old_id = $item->{id};
+    warn "Converting $type #$old_id\n";
+
     my ($new_id, $obj) = $E{$type}{$old_id} || $T{$type}{import}( $item, @_ );
     if ($new_id) {
         $E{$type}{$old_id} = $new_id;
-        print "Created $type #$old_id\n";
+        print "  Created\n";
     }
     else {
 
@@ -131,7 +133,7 @@ sub _ConvertItem {
         ($new_id, $obj) = $T{$type}{import}( $item, @_ );
         if ($new_id) {
             $E{$type}{$old_id} = $new_id;
-            print "Created $type #$old_id as #$new_id\n";
+            print "  Created as #$new_id\n";
         }
     }
     unless ( $E{$type}{$old_id} ) {
